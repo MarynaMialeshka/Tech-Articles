@@ -1,0 +1,6 @@
+# Correlation operation id on AppInsights for custom transactions
+
+I'm going to share one curious task I happenned to work on. 
+
+There's a web page in our project with quite a long download. Moreover, its full download until it's ready to use includes a bunch of additional ajax requests to backend. On AppInsights on Azure, each of these requests displayed as a separate transaction. My task was to enable correlating operation id of these requests so that they are presented as a single multilayer transaction. Then, it is possible to analyze performance of the web page and instantly response to its degrading.
+
