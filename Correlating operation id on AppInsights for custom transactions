@@ -1,6 +1,24 @@
 # Correlation operation id on AppInsights for custom transactions
 
-I'm going to share one curious task I happenned to work on. 
-
 There's a web page in our project with quite a long download. Moreover, its full download until it's ready to use includes a bunch of additional ajax requests to backend. On AppInsights on Azure, each of these requests displayed as a separate transaction. My task was to enable correlating operation id of these requests so that they are presented as a single multilayer transaction. Then, it is possible to analyze performance of the web page and instantly response to its degrading.
 
+## Possible solutions
+There were two posiible way of achieving desired result.
+
+* Using font-end SDK to correlate operation id. The main concern is security - in this cade, is was required to expose app insights api key and secrets on a web page.
+
+* Modify telemetry tracking on backend side. At that moment, tracking was enabled through Miscrosoft Nuget package. What was needed to implement was passing operation id to a HTTP request (e.g. as a header) and intercepting and handling incoming requests with X-TelemetryOperationId header. This was achieved via HttpModule (the project was working on ASP.NET MVC, with APS.NET Core at least the code of middleware would've been much cleaner). 
+
+It was decided to proceed with the second approach.
+
+## Solution outline
+A similar problem had alredy been described in [this](https://medium.com/nerd-for-tech/correlate-background-jobs-or-integration-events-with-the-initial-command-in-application-insights-2b549e574a51) article which turnded out to be increadibly helpful. The solution suggested by the author is pretty sraightforward: intercept operation id by creating fake request telemetry and initializing it with current context. Then, having the operation id, track our own custom event, wrapping it in a new operation with already known operation id. However, a few modifications were needed to make it work.
+
+First of all, telemetry tracking was already working out of the box and we couldn't interfere in request tracking outside the task scope.Secondly, it was impossible to wrap the whole request cycple in an operation since HttpModule doesn't provide such functionality (unlike middlewares in ASP.NET Core). 
+
+## Implementation
+Taking all this into account, we came up with the solution:
+
+1. In the controller method leading to the web page in question, a fake reauest telemetry is created to intercept two variables: operation id AND parent operation id. I'll explain later why we needed the last one. These two values are passed to a view, where they are put to a header of each outcoming ajax request.
+
+2. 
