@@ -1,4 +1,4 @@
-# Correlation operation id on AppInsights for custom transactions
+# Correlating operation id on AppInsights for custom transactions
 
 There's a web page in our project with quite a long download. Moreover, its full download until it's ready to use includes a bunch of additional ajax requests to backend. On AppInsights on Azure, each of these requests displayed as a separate transaction. My task was to enable correlating operation id of these requests so that they are presented as a single multilayer transaction. Then, it is possible to analyze performance of the web page and instantly response to its degrading.
 
@@ -19,6 +19,17 @@ First of all, telemetry tracking was already working out of the box and we could
 ## Implementation
 Taking all this into account, we came up with the solution:
 
-1. In the controller method leading to the web page in question, a fake reauest telemetry is created to intercept two variables: operation id AND parent operation id. I'll explain later why we needed the last one. These two values are passed to a view, where they are put to a header of each outcoming ajax request.
+1. In the controller method leading to the web page in question, a fake reauest telemetry is created to intercept two parameters: operation id AND parent operation id. I'll explain later why we needed the last one. These two values are passed to a view, where they are put to a header of each outcoming ajax request.
 
-2. 
+2. To capture telemetry on AppInsights, `HttpModule` is created. In `BeginRequest` method, if a X-TelemetryOperationId header is presented and not empty (i.e. zero guid), a telemetry operation is started and put into current `HttpContext`.
+
+3. In `EndRequest` method of `HttpModule`, we retrieve telemtry operation from the context, stop it, and assign operation id and parent operation id from the header. Operation id is responsible for interpreting current request as a part of a transaction on AppInsights. Whereas parent operation id enables us to build a tree of requests. Which means the request handled in `HttpModule` is displayed as a child of the controller method call where we strated telemetry capturing in p. 1.
+
+4. Additionaly, we have to stop telemetry capturing as soon as web page is downloaded. Otherwise, each outcoming ajax request is tracked as a part of the same transaction, which doesn't correspond our goal. So, all we need to do is finding some convenient place in the source code indicating finished download. In my case, this was a callback running upon successful api call. This is where the heder is erased (or set to zero giud to indicate its intentioanl reset).
+
+## A few things to note
+
+As I mentioned in a [previous section](#solution-outline), we couldn't alter existing telemetry tracking. Operation created and tracked in `HttpModule` as parts of a transaction are in fact copies of automatically tracked requests as separate transactions. 
+
+Also, solution described in this document, implies manual work for each web page we want to track on AppInsights in a simialar way. I.e. each time a developer must find proper places in source code to start and end telemetry capturing.
+
