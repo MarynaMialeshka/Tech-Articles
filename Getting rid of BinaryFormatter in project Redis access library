@@ -1,0 +1,31 @@
+# Getting rid of BinaryFormatter in internal Redis access library
+
+As a part of security improvement on my project, it was decided to replace all usage of [`BinaryFormatter`](https://learn.microsoft.com/en-us/dotnet/standard/serialization/binaryformatter-security-guide) to Newtonsoft `JsonSerializer`. This also included cleaning up usages of BinaryFormatter in one of our internal NuGet packages designed to provide access to Redis Cache through Microsoft.StackExchange.Redis, which is what took a few months instead of a few story points. Spoiler: we didn't manage to get rid of BinaryFormatter completely, but a bit later about this.
+
+## The main issue
+What could be easier to replace `BinaryFormatter` to `JsonSerializer` in the `Store` and `Retrieve` methods in a library and upgrade its version? It wasn't that difficult, indeed. However, `BinaryFormatter` allowed to retrieve and deserialize `System.Object` type from cache and, then, it's up to a developer whiat type the retrieved object is cast to. Such a usage of the `Retrieve<object>()` method became really ubiquitous. On the contrary, `JsonSerializer` doesn't allow this, it requires strongly typed (de)serializing, so my task included also a huge refactoring.
+
+## Collateral difficulties
+First of, determining types to use instead of object was challenging from time to time. There was a number of reasons for this:
+
+- a few different types might have been stored under the same key depending on the flow;
+- `Store` and `Retrieve` operations were sometimes part of different flows, and only global key search could help to determine the right type;
+- even when global search for the key was needed, the key might have been dynamically created from variables of different names.
+
+Secondly, some types themselves needed refactoring, such as making properties public, adding attributes or constructors.
+
+<a id="interfaces"></a>
+Thirdly, a number of types to be replaced turned out to be interfaces, which `JsonSerializer` couldn't work with.
+
+Finally, not always was it my responsibility to modify a type, e.g. `CultureInfo`. In this case, I had no other option but to store `DateTimeFormat` and `CurrentCulture` separately under different keys and set some properties manually.
+
+## Risk mitigation strategy
+As I mentioned in the previous section, a number of difficulties accompanied the refactoring. In addition, as I also said in the beginning, the library was used literally everywhere. Although the regression testing was performed by all teams, we couldn't be sure all crucial systems were checked. To make matters worse, the task couldn't be rollbacked in case of emergency either, 'cause it would've meant rebuild, redeploy, and retest of all modules. On our project, we have some issues with CI/CD processes, which made deploying such a huge change including updates of lib versions rather time and effort consuming with no success guaranteed.
+
+Taking all these into account, we came up with a backup plan - do not leave out BinaryFormatter completely. When we stumble across a type we cannot deserialize using `JsonSerializer`, use `BinaryFormatter` and log the key it is stored under. Whereas storing objects to Redis always occurs through `JsonSerializer`. This way, we make sure to be able to deserialize objects from Redis cache, track the remaining binary serialized keys, and gradually transit to json based cache storage.
+
+## Production emergency
+Unfortunately, these actions didn't save us from a production emergency. After the release, we started getting logs that integration user principals cannot be deserialized, which was the consquence of [this](#interfaces) issue. These users weren't meant to relogin, that's why our backup with using `JsonSerializer` to store new data didn't work. So our fix was to replace the wrong UserPrincipal child class with the right one.
+
+## Bonus: where else BinaryFormatter remained in result
+As I mentioned, `Binaryformatter` remained as a backup strategy for deserializing. However, there is one more place, and this is [ASP.NET Session State Provider for Redis cache](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-aspnet-session-state-provider). `BinaryFormatter` is used as a deefault serializer, and it was decided no to replace it with a custom json-based one.
